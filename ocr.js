@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const screenshotsDir = path.join(__dirname, 'screenshots');
 const markdownOutputFile = path.join(__dirname, 'ocr.md'); // Renamed for clarity
-const defaultOllamaModel = 'llama3.2-vision';
+const defaultOllamaModel = 'gemma3:4b-it-qat';
 const transcriptionPrompt = `Extract and transcribe *only* the main textual content of the book page shown in this image. Preserve formatting like paragraphs where possible. Ignore any interface elements, headers, footers, page numbers, or reading progress indicators. Provide only the transcribed text, exactly as it appears on the page. Do not add any descriptions or commentary about the image itself.`;
 
 const numericalSort = (a, b) => {
