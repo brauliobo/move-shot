@@ -3,13 +3,38 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+// --- Global Timeout Configuration ---
+const TIMEOUT_MINUTES = 30;
+const TIMEOUT_MS = TIMEOUT_MINUTES * 60 * 1000; // Convert to milliseconds
+
+// Set undici HTTP client timeout via NODE_OPTIONS
+// This needs to be done before any HTTP requests are made
+if (!process.env.NODE_OPTIONS || !process.env.NODE_OPTIONS.includes('--http-parser-timeout')) {
+  process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS || ''} --http-parser-timeout=${TIMEOUT_MS}`;
+  console.log(`Set undici HTTP parser timeout to ${TIMEOUT_MINUTES} minutes`);
+}
+
 // --- Configuration & Helpers ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const screenshotsDir = path.join(__dirname, 'screenshots');
 const markdownOutputFile = path.join(__dirname, 'ocr.md'); // Renamed for clarity
-const defaultOllamaModel = 'gemma3:4b-it-qat';
-const transcriptionPrompt = `Extract and transcribe *only* the main textual content of the book page shown in this image. Preserve formatting like paragraphs where possible. Ignore any interface elements, headers, footers, page numbers, or reading progress indicators. Provide only the transcribed text, exactly as it appears on the page. Do not add any descriptions or commentary about the image itself.`;
+const defaultOllamaModel = process.env.OLLAMA_MODEL || 'gemma3:12b-it-qat';
+const transcriptionPrompt = `Extract and transcribe *only* the main textual content of the book page shown in this image. Preserve formatting like paragraphs where possible.
+
+IGNORE all of the following elements:
+- Headers with book title, chapter name, or author names
+- Footers with page numbers or location indicators
+- Kindle progress indicators (percentage, time left)
+- Navigation bars or buttons
+- Kindle menu items or icons
+- Any location markers like "Location 123-456"
+- Chapter or section numbering not part of the actual text
+- Any UI elements overlaid on the text
+
+Provide only the clean transcribed text content, exactly as it appears on the page. Do not add any descriptions or commentary about the image itself.`;
+// Use the same global timeout
+const ollamaTimeoutMs = TIMEOUT_MS;
 
 const numericalSort = (a, b) => {
     const numA = parseInt(a.match(/^(\d+)/)?.[1] || '0', 10);
@@ -49,7 +74,7 @@ export async function getScreenshotFiles() {
 /**
  * Performs OCR on a single image file using Ollama.
  * @param {string} imageFilename - The filename of the image within the screenshots directory.
- * @param {string} [model] - The Ollama model to use (defaults to 'llama3.2-vision').
+ * @param {string} [model] - The Ollama model to use (defaults to environment variable or 'gemma3:12b-it-qat').
  * @returns {Promise<string|null>} A promise resolving to the transcribed text, or null if OCR fails or returns no content.
  */
 export async function performOcrOnImage(imageFilename, model = defaultOllamaModel) {
@@ -65,7 +90,10 @@ export async function performOcrOnImage(imageFilename, model = defaultOllamaMode
                 role: 'user',
                 content: transcriptionPrompt,
                 images: [imageBase64]
-            }]
+            }],
+            options: {
+                timeout: ollamaTimeoutMs
+            }
         });
 
         if (response?.message?.content) {
@@ -88,8 +116,10 @@ export async function performOcrOnImage(imageFilename, model = defaultOllamaMode
 
 // --- Function to Generate Markdown File (for standalone execution) ---
 async function generateMarkdownFile() {
-    console.log(`Starting Markdown generation process using model: ${defaultOllamaModel}`);
+    const modelToUse = defaultOllamaModel;
+    console.log(`Starting Markdown generation process using model: ${modelToUse}`);
     console.log(`Output file: ${markdownOutputFile}`);
+    console.log(`Timeout set to: ${TIMEOUT_MINUTES} minutes`);
 
     let screenshotFiles;
     try {

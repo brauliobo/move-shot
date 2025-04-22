@@ -1,4 +1,7 @@
-import { PDFDocument, StandardFonts, rgb, PDFRenderingMode } from 'pdf-lib';
+import pdfLib from 'pdf-lib';
+// Destructure TimesRoman instead of Helvetica
+const { PDFDocument, StandardFonts, rgb } = pdfLib;
+
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -9,9 +12,9 @@ import { getScreenshotFiles, performOcrOnImage } from './ocr.js';
 // --- Configuration ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const screenshotsDir = path.join(__dirname, 'screenshots'); // Needed for full image paths
+const screenshotsDir = path.join(__dirname, 'screenshots');
 const pdfOutputFile = path.join(__dirname, 'out.pdf');
-const ollamaModelForPdf = process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision'; // Can use same or different model
+const ollamaModelForPdf = process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision';
 
 // --- Main PDF Generation Function ---
 async function generateSearchablePdf() {
@@ -20,84 +23,72 @@ async function generateSearchablePdf() {
 
     let screenshotFiles;
     try {
-        screenshotFiles = await getScreenshotFiles(); // Use the imported function
+        screenshotFiles = await getScreenshotFiles();
     } catch (error) {
         console.error("Error getting screenshot files:", error.message);
         return;
     }
 
     const pdfDoc = await PDFDocument.create();
-    // Embed a standard font for the invisible text layer
-    const embeddedFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    // ***** CHANGE 1: Use a different standard font *****
+    const embeddedFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
     let pagesAdded = 0;
 
-    console.log('Processing screenshots and adding pages to PDF...');
+    console.log('Processing screenshots and adding pages to PDF incrementally...');
 
     for (const filename of screenshotFiles) {
         const fullImagePath = path.join(screenshotsDir, filename);
-        console.log(`\nProcessing ${filename} for PDF...`);
+        console.log(`\nProcessing ${filename}...`);
 
         try {
-            // 1. Perform OCR
-            const ocrText = await performOcrOnImage(filename, ollamaModelForPdf); // Use imported function
-
-            // 2. Read Image Data
+            const ocrText = await performOcrOnImage(filename, ollamaModelForPdf);
             const imageBytes = await fs.readFile(fullImagePath);
             const pdfImage = await pdfDoc.embedPng(imageBytes);
-            const imgDims = pdfImage.scale(1.0); // Get dimensions
-
-            // 3. Add Page to PDF
+            const imgDims = pdfImage.scale(1.0);
             const page = pdfDoc.addPage([imgDims.width, imgDims.height]);
             pagesAdded++;
-            console.log(`  - Added page ${pagesAdded} with dimensions ${imgDims.width}x${imgDims.height}`);
+            console.log(`  - Added page ${pagesAdded} (dimensions: ${imgDims.width}x${imgDims.height})`);
 
-            // 4. Draw Visible Image
             page.drawImage(pdfImage, {
                 x: 0,
                 y: 0,
                 width: imgDims.width,
                 height: imgDims.height,
             });
-            console.log(`  - Drew visible image for ${filename}`);
 
-            // 5. Draw Invisible Text Layer (if OCR was successful)
             if (ocrText && ocrText.trim().length > 0) {
                 page.drawText(ocrText, {
-                    x: 5, // Small offset from edge
-                    y: 5, // Draw near bottom-left (adjust as needed)
+                    // ***** CHANGE 3: Adjust position slightly *****
+                    x: 10, // Slightly away from left edge
+                    y: 10, // Slightly away from bottom edge
                     font: embeddedFont,
-                    size: 6, // Use a small font size for the hidden layer
-                    // color: rgb(0, 0, 0), // Color doesn't matter when invisible
-                    renderingMode: PDFRenderingMode.Invisible, // Make text invisible
-                    // We don't have specific coordinates, so text won't overlay perfectly,
-                    // but it will be on the correct page and searchable.
+                    // ***** CHANGE 2: Increase font size slightly *****
+                    size: 8,
+                    renderingMode: 3, // Keep using integer value for Invisible
                 });
-                console.log(`  - Added invisible text layer for ${filename}`);
             } else {
                 console.log(`  - Skipping text layer for ${filename} (OCR failed or returned empty).`);
             }
 
+            // Incremental Save
+            const pdfBytes = await pdfDoc.save();
+            await fs.writeFile(pdfOutputFile, pdfBytes);
+            console.log(`  - Saved intermediate PDF (${pdfOutputFile}) with ${pagesAdded} page(s).`);
+
         } catch (error) {
             console.error(`\nError processing ${filename} for PDF:`, error.message);
             console.error("  - This page might be missing or incomplete in the PDF.");
-            // Continue to the next file
         }
-    } // End loop through files
+    } // End loop
 
-    if (pagesAdded === 0) {
-         console.log("\nNo pages were successfully added to the PDF. Aborting save.");
-         return;
-    }
-
-    try {
-        // 6. Save PDF
-        const pdfBytes = await pdfDoc.save();
-        await fs.writeFile(pdfOutputFile, pdfBytes);
-        console.log(`\nSuccessfully generated searchable PDF: ${pdfOutputFile} with ${pagesAdded} page(s).`);
+    console.log('\n--------------------------------------------------');
+    if (pagesAdded > 0) {
+        console.log(`Processing finished. Final PDF saved incrementally to ${pdfOutputFile} with ${pagesAdded} page(s).`);
         console.log("NOTE: Text selection might not perfectly align with visual text due to OCR limitations.");
-    } catch(saveError) {
-        console.error("\nError saving the final PDF:", saveError);
+    } else {
+        console.log("Processing finished, but no pages were successfully added to the PDF.");
     }
+    console.log('--------------------------------------------------');
 }
 
 // --- Run the Script ---
